@@ -2,10 +2,6 @@
 Модуль 3, Занятие 5 (часть Б) — генерация внутренних документов ПромТеха
 через GigaChat.
 
-ТВОЯ РАБОТА: TODO 4 (validate_equipment_id) и TODO 5 (extract_json_array).
-Сделай их ДО запуска: без TODO 5 скрипт спотыкается на ответах в ```json```,
-без TODO 4 в корпус пролезают карточки выдуманного оборудования.
-
 Публичные документы (ФНП, ГОСТ) мы спарсили — но у настоящего предприятия
 основа базы знаний ВНУТРЕННЯЯ: карточки оборудования, журнал инцидентов,
 свои регламенты. Таких документов в интернете нет, поэтому для учебного
@@ -72,32 +68,21 @@ REGISTRY = json.loads(
 # Латиница-двойники: модель может написать «KM-101» латиницей (см. М2).
 _LAT_TO_CYR = str.maketrans("ABCEHKMOPTXYabcehkmoptxy", "АВСЕНКМОРТХУавсенкмортху")
 
+
 def _norm(value: str) -> str:
     return value.strip().replace(" ", "-").translate(_LAT_TO_CYR).casefold()
+
 
 REGISTRY_LOOKUP = {_norm(item["id"]): item["id"] for item in REGISTRY}
 
 
 def validate_equipment_id(value) -> str | None:
-    """Сверяет идентификатор оборудования с реестром.
-
-    TODO 4: сейчас функция возвращает значение как есть — это заглушка.
-    Она пропустит в корпус и «км 101», и латинское «KM-101», и полностью
-    выдуманный моделью код — а в М2 мы уже выяснили, чем это кончается.
-
-    Что сделать (всё уже готово выше — как в Занятии 4, модуль М2):
-      1. Нормализовать написание: key = _norm(str(value)).
-      2. Поискать key в REGISTRY_LOOKUP.
-      3. Нашли — вернуть КАНОНИЧНУЮ запись из реестра (значение словаря):
-         «км 101» -> «КМ-101», латиница -> кириллица.
-      4. Не нашли — вернуть None: модель выдумала оборудование,
-         объект будет отбракован.
-    """
-    return str(value).strip()
+    key = _norm(str(value))
+    return REGISTRY_LOOKUP.get(key)
 
 
-BATCH_SIZE = 5        # объектов за один вызов (батчи по 3-5)
-N_INCIDENTS = 12      # записей журнала инцидентов
+BATCH_SIZE = 5  # объектов за один вызов (батчи по 3-5)
+N_INCIDENTS = 12  # записей журнала инцидентов
 
 # Раздел короче этого приклеиваем к предыдущему: запись из одного заголовка
 # и двух строк — плохая единица поиска, она ни на что не отвечает.
@@ -222,9 +207,26 @@ def polish_reglament(text: str, number: str) -> str:
 #  МЕТАДАННЫЕ: ДАТЫ, ВЕРСИЯ, РАЗДЕЛЫ
 # ====================================================================
 
-MONTHS = {m: i for i, m in enumerate(
-    ["январ", "феврал", "март", "апрел", "ма", "июн", "июл",
-     "август", "сентябр", "октябр", "ноябр", "декабр"], 1)}
+MONTHS = {
+    m: i
+    for i, m in enumerate(
+        [
+            "январ",
+            "феврал",
+            "март",
+            "апрел",
+            "ма",
+            "июн",
+            "июл",
+            "август",
+            "сентябр",
+            "октябр",
+            "ноябр",
+            "декабр",
+        ],
+        1,
+    )
+}
 
 
 def normalize_date(value) -> str:
@@ -243,21 +245,23 @@ def normalize_date(value) -> str:
     if not text:
         return ""
 
-    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text)          # 2026-09-15, с временем или без
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text)  # 2026-09-15, с временем или без
     if m:
         return f"{m[1]}-{m[2]}-{m[3]}"
 
-    m = re.match(r"^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})", text)   # 16.07.2023, 01-10-2022
+    m = re.match(
+        r"^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})", text
+    )  # 16.07.2023, 01-10-2022
     if m:
         return f"{m[3]}-{int(m[2]):02d}-{int(m[1]):02d}"
 
-    m = re.match(r"^(\d{1,2})\s+([А-Яа-я]+)\s+(\d{4})", text)       # 10 марта 2024 г.
+    m = re.match(r"^(\d{1,2})\s+([А-Яа-я]+)\s+(\d{4})", text)  # 10 марта 2024 г.
     if m:
         for name, number in MONTHS.items():
             if m[2].lower().startswith(name):
                 return f"{m[3]}-{number:02d}-{int(m[1]):02d}"
 
-    m = re.match(r"^(\d{4})$", text)                                 # просто год
+    m = re.match(r"^(\d{4})$", text)  # просто год
     if m:
         return m[1]
 
@@ -303,6 +307,7 @@ def split_sections(text: str, fallback: str) -> list:
     Резать строго по «##» нельзя: в одном нашем регламенте таких заголовков
     девять, а в другом всего два, остальная структура на «###».
     """
+
     def clean_heading(raw: str) -> str:
         """Название раздела без markdown-разметки.
 
@@ -320,20 +325,19 @@ def split_sections(text: str, fallback: str) -> list:
 
     records = []
     # всё до первого заголовка — шапка документа: номер, версия, кем утверждён
-    preamble = text[:headings[0].start()].strip()
+    preamble = text[: headings[0].start()].strip()
     if preamble:
         records.append({"page": None, "section": "Шапка документа", "text": preamble})
 
     for i, h in enumerate(headings):
         end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
-        body = text[h.start():end].strip()
+        body = text[h.start() : end].strip()
         if not body:
             continue
         if records and len(body) < MIN_SECTION_CHARS:
             records[-1]["text"] += "\n\n" + body
         else:
-            records.append({"page": None, "section": clean_heading(h[1]),
-                            "text": body})
+            records.append({"page": None, "section": clean_heading(h[1]), "text": body})
 
     return records
 
@@ -342,6 +346,7 @@ def split_sections(text: str, fallback: str) -> list:
 #  ВЫЗОВ МОДЕЛИ
 # ====================================================================
 
+
 def ask_model(prompt: str, max_tokens: int = 2500) -> str:
     """Один вызов GigaChat. Копим usage, чтобы в конце показать цену прогона."""
     with GigaChat(
@@ -349,12 +354,14 @@ def ask_model(prompt: str, max_tokens: int = 2500) -> str:
         scope=os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS"),
         verify_ssl_certs=False,
     ) as client:
-        response = client.chat({
-            "messages": [{"role": "user", "content": prompt}],
-            "model": "GigaChat",
-            "temperature": 0.7,
-            "max_tokens": max_tokens,
-        })
+        response = client.chat(
+            {
+                "messages": [{"role": "user", "content": prompt}],
+                "model": "GigaChat",
+                "temperature": 0.7,
+                "max_tokens": max_tokens,
+            }
+        )
 
     _usage["prompt"] += response.usage.prompt_tokens
     _usage["completion"] += response.usage.completion_tokens
@@ -362,25 +369,16 @@ def ask_model(prompt: str, max_tokens: int = 2500) -> str:
 
 
 def extract_json_array(raw: str):
-    """Достаёт JSON-массив из ответа модели.
+    fenced = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", raw, re.DOTALL)
+    block = fenced.group(1) if fenced else None
+    if block is None:
+        plain = re.search(r"\[.*\]", raw, re.DOTALL)
+        block = plain.group(0) if plain else None
+    if block is None:
+        return None
 
-    TODO 5: сейчас функция пробует разобрать ответ целиком — это заглушка.
-    Она работает, только пока модель вернула ЧИСТЫЙ JSON. Но модель любит
-    обернуть ответ в ```json ... ``` или добавить «Вот результат:» — и тогда
-    json.loads падает, хотя массив в ответе есть.
-
-    Что сделать (как extract_json_block в М2, только для массива [...]):
-      1. Поискать блок в ограде: re.search(r"```(?:json)?\\s*(\\[.*?\\])\\s*```",
-         raw, re.DOTALL) — если нашёлся, взять .group(1).
-      2. Иначе взять кусок от первой [ до последней ]:
-         re.search(r"\\[.*\\]", raw, re.DOTALL) — .group(0).
-      3. Ничего не нашлось — вернуть None.
-      4. json.loads(блок); если JSONDecodeError — вернуть None
-         (вызывающий код сам перегенерирует батч).
-    """
     try:
-        data = json.loads(raw)
-        return data if isinstance(data, list) else None
+        return json.loads(block)
     except json.JSONDecodeError:
         return None
 
@@ -398,12 +396,13 @@ def ask_for_json(prompt: str, expected: int, what: str, max_tokens: int = 2500):
 
 
 def batches(items: list, size: int) -> list:
-    return [items[i:i + size] for i in range(0, len(items), size)]
+    return [items[i : i + size] for i in range(0, len(items), size)]
 
 
 # ====================================================================
 #  ЗАПИСЬ В КОРПУС
 # ====================================================================
+
 
 def sha256(path: Path) -> str:
     """Контрольная сумма сырого ответа модели — чтобы было видно,
@@ -415,8 +414,16 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def write_corpus_file(doc_id: str, doc_type: str, title: str, equipment: list,
-                      version: str, date: str, source: Path, records: list):
+def write_corpus_file(
+    doc_id: str,
+    doc_type: str,
+    title: str,
+    equipment: list,
+    version: str,
+    date: str,
+    source: Path,
+    records: list,
+):
     """Пишет один документ корпуса в data/corpus/<doc_id>.json."""
     doc = {
         "doc_id": doc_id,
@@ -427,13 +434,15 @@ def write_corpus_file(doc_id: str, doc_type: str, title: str, equipment: list,
         "date": date,
         "source_file": f"generated/{source.name}",
         "source_url": "",
-        "retrieved_at": time.strftime("%Y-%m-%d",
-                                      time.localtime(source.stat().st_mtime)),
+        "retrieved_at": time.strftime(
+            "%Y-%m-%d", time.localtime(source.stat().st_mtime)
+        ),
         "sha256": sha256(source),
         "records": records,
     }
     (CORPUS_DIR / f"{doc_id}.json").write_text(
-        json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def clear_old(prefix: str):
@@ -444,6 +453,7 @@ def clear_old(prefix: str):
 # ====================================================================
 #  СБОРКА КОРПУСА ИЗ СЫРЫХ ОТВЕТОВ МОДЕЛИ
 # ====================================================================
+
 
 def build_cards(cards: list):
     """Карточка оборудования — короткий документ, режем его на одну запись."""
@@ -528,8 +538,10 @@ def build_reglaments():
             source=source,
             records=records,
         )
-        print(f"    REGL-GEN-{i:02d}: разделов {len(records)}, "
-              f"версия {version or '—'}, утверждён {date or '—'}")
+        print(
+            f"    REGL-GEN-{i:02d}: разделов {len(records)}, "
+            f"версия {version or '—'}, утверждён {date or '—'}"
+        )
         built += 1
     return built
 
@@ -569,6 +581,7 @@ def rebuild():
 #  ЧАСТЬ 1 — КАРТОЧКИ ОБОРУДОВАНИЯ
 # ====================================================================
 
+
 def generate_cards() -> list:
     print("\n" + "=" * 78)
     print("КАРТОЧКИ ОБОРУДОВАНИЯ — по одной на каждую единицу из реестра")
@@ -577,24 +590,27 @@ def generate_cards() -> list:
     cards = []
     for batch in batches(REGISTRY, BATCH_SIZE):
         registry_list = "\n".join(f"- {it['id']} — {it['name']}" for it in batch)
-        prompt = (PROMPT_CARDS
-                  .replace("{N}", str(len(batch)))
-                  .replace("{REGISTRY_LIST}", registry_list))
+        prompt = PROMPT_CARDS.replace("{N}", str(len(batch))).replace(
+            "{REGISTRY_LIST}", registry_list
+        )
         print(f"\n  батч: {', '.join(it['id'] for it in batch)}")
         raw_cards = ask_for_json(prompt, len(batch), "карточек")
 
         for card in raw_cards:
             canon = validate_equipment_id(card.get("equipment_id", ""))
             if canon is None:
-                print(f"    ОТБРАКОВАНА карточка «{card.get('equipment_id')}» — "
-                      f"такого id нет в реестре (модель выдумала)")
+                print(
+                    f"    ОТБРАКОВАНА карточка «{card.get('equipment_id')}» — "
+                    f"такого id нет в реестре (модель выдумала)"
+                )
                 continue
             card["equipment_id"] = canon  # каноничное написание
             cards.append(card)
             print(f"    OK: {card['equipment_id']} ({card.get('type', '?')})")
 
     (GENERATED_DIR / "equipment_cards.json").write_text(
-        json.dumps({"cards": cards}, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps({"cards": cards}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     build_cards(cards)
     print(f"\n  Итого карточек: {len(cards)} из {len(REGISTRY)}")
@@ -604,6 +620,7 @@ def generate_cards() -> list:
 # ====================================================================
 #  ЧАСТЬ 2 — ЖУРНАЛ ИНЦИДЕНТОВ
 # ====================================================================
+
 
 def generate_incidents():
     cards_file = GENERATED_DIR / "equipment_cards.json"
@@ -620,29 +637,37 @@ def generate_incidents():
     incidents = []
     start = 1
     for size in [len(b) for b in batches(list(range(N_INCIDENTS)), 4)]:
-        prompt = (PROMPT_INCIDENTS
-                  .replace("{N}", str(size))
-                  .replace("{CARD_IDS}", ", ".join(card_ids))
-                  .replace("{START:03d}", f"{start:03d}"))
+        prompt = (
+            PROMPT_INCIDENTS.replace("{N}", str(size))
+            .replace("{CARD_IDS}", ", ".join(card_ids))
+            .replace("{START:03d}", f"{start:03d}")
+        )
         print(f"\n  батч: {size} записей, начиная с INC-2026-{start:03d}")
         raw = ask_for_json(prompt, size, "инцидентов")
 
         for inc in raw:
             canon = validate_equipment_id(inc.get("equipment_id", ""))
             if canon is None:
-                print(f"    ОТБРАКОВАНА запись: оборудование "
-                      f"«{inc.get('equipment_id')}» не из карточек")
+                print(
+                    f"    ОТБРАКОВАНА запись: оборудование "
+                    f"«{inc.get('equipment_id')}» не из карточек"
+                )
                 continue
             inc["equipment_id"] = canon
-            inc["incident_id"] = f"INC-2026-{len(incidents) + 1:03d}"  # сквозная нумерация
+            inc["incident_id"] = (
+                f"INC-2026-{len(incidents) + 1:03d}"  # сквозная нумерация
+            )
             incidents.append(inc)
-            print(f"    OK: {inc['incident_id']} [{inc['equipment_id']}] "
-                  f"{str(inc.get('severity', '?'))}")
+            print(
+                f"    OK: {inc['incident_id']} [{inc['equipment_id']}] "
+                f"{str(inc.get('severity', '?'))}"
+            )
         start += size
 
     (GENERATED_DIR / "incidents.json").write_text(
         json.dumps({"incidents": incidents}, ensure_ascii=False, indent=2),
-        encoding="utf-8")
+        encoding="utf-8",
+    )
 
     build_incidents(incidents)
     print(f"\n  Итого записей: {len(incidents)}")
@@ -652,6 +677,7 @@ def generate_incidents():
 #  ЧАСТЬ 3 — ВНУТРЕННИЕ РЕГЛАМЕНТЫ
 # ====================================================================
 
+
 def generate_reglaments():
     print("\n" + "=" * 78)
     print("ВНУТРЕННИЕ РЕГЛАМЕНТЫ — проверяемые факты + раздел исключений")
@@ -660,8 +686,9 @@ def generate_reglaments():
     for i, topic in enumerate(REGLAMENT_TOPICS, 1):
         print(f"\n  [{i}/{len(REGLAMENT_TOPICS)}] {topic}")
         prompt = PROMPT_REGLAMENT.replace("{ТЕМА_РЕГЛАМЕНТА}", topic)
-        text = polish_reglament(ask_model(prompt, max_tokens=4000).strip(),
-                                REGLAMENT_NUMBERS[i - 1])
+        text = polish_reglament(
+            ask_model(prompt, max_tokens=4000).strip(), REGLAMENT_NUMBERS[i - 1]
+        )
 
         if len(text) < 1500:
             print(f"    внимание: регламент подозрительно короткий ({len(text)} симв.)")
@@ -673,12 +700,17 @@ def generate_reglaments():
 
 # ====================================================================
 
+
 def main():
     parser = argparse.ArgumentParser(description="Генерация документов ПромТеха")
-    parser.add_argument("--part", choices=["cards", "incidents", "reglaments", "all"],
-                        default="all")
-    parser.add_argument("--rebuild", action="store_true",
-                        help="пересобрать корпус из data/generated без вызова модели")
+    parser.add_argument(
+        "--part", choices=["cards", "incidents", "reglaments", "all"], default="all"
+    )
+    parser.add_argument(
+        "--rebuild",
+        action="store_true",
+        help="пересобрать корпус из data/generated без вызова модели",
+    )
     args = parser.parse_args()
 
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
@@ -701,8 +733,10 @@ def main():
 
     total = _usage["prompt"] + _usage["completion"]
     print("\n" + "=" * 78)
-    print(f"Токены за прогон: {_usage['prompt']} промпт + "
-          f"{_usage['completion']} ответ = {total}")
+    print(
+        f"Токены за прогон: {_usage['prompt']} промпт + "
+        f"{_usage['completion']} ответ = {total}"
+    )
     print("=" * 78)
 
 
