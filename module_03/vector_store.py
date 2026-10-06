@@ -66,21 +66,17 @@ QUERIES = [
     "как часто проводить углублённую проверку насоса",
     "кто согласует ремонт насосного оборудования",
     "что за инцидент был с гидравлическим прессом",
-    "___",
-    "___",
+    "как часто обслуживать компрессор",
+    "агрегат перестал качать, куда смотреть",
 ]
 
-# TODO 3: порог уверенности. Если лучший score ниже этого числа — считаем,
-# что в базе ответа нет, и честно об этом говорим.
-# Сейчас 0.0 — порога нет вовсе, в выводе видно всё подряд, включая мусор.
-# Подбери его по последнему блоку вывода: там напечатаны худший score
-# вопроса из базы и лучший score вопроса, которого в базе нет.
-MIN_SCORE = 0.0
+MIN_SCORE = 0.3
 
 
 # ====================================================================
 #  ПОИСК
 # ====================================================================
+
 
 def load_manifest() -> dict:
     """Читает манифест индекса: чем и с какими параметрами он собран.
@@ -94,8 +90,9 @@ def load_manifest() -> dict:
     return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
-def search(client, model, query: str, alias: str,
-           doc_type: str = None, limit: int = TOP_K):
+def search(
+    client, model, query: str, alias: str, doc_type: str = None, limit: int = TOP_K
+):
     """Ищет в базе куски, близкие к запросу.
 
     TODO 2: сейчас функция игнорирует doc_type и всегда ищет по всей базе.
@@ -115,6 +112,10 @@ def search(client, model, query: str, alias: str,
     vector = model.encode(query).tolist()
 
     query_filter = None
+    if doc_type is not None:
+        query_filter = Filter(
+            must=[FieldCondition(key="type", match=MatchValue(value=doc_type))]
+        )
 
     return client.query_points(
         collection_name=alias,
@@ -138,16 +139,18 @@ def show(hits, query: str):
         return
     for h in hits:
         p = h.payload
-        print(f"    {h.score:5.3f}  [{p['type']:<21}] {p['doc_id']:<15} "
-              f"{where(p)}")
+        print(f"    {h.score:5.3f}  [{p['type']:<21}] {p['doc_id']:<15} {where(p)}")
     if hits[0].score < MIN_SCORE:
-        print(f"    -> лучший score {hits[0].score:.3f} ниже порога {MIN_SCORE}: "
-              f"считаем, что ответа в базе НЕТ")
+        print(
+            f"    -> лучший score {hits[0].score:.3f} ниже порога {MIN_SCORE}: "
+            f"считаем, что ответа в базе НЕТ"
+        )
 
 
 # ====================================================================
 #  ОЦЕНКА
 # ====================================================================
+
 
 def check_questions(client, model, alias: str) -> tuple:
     """Прогоняет контрольные вопросы и считает две метрики."""
@@ -164,7 +167,9 @@ def check_questions(client, model, alias: str) -> tuple:
         best = found[0].score if found else 0.0
 
         if not q["in_corpus"]:
-            print(f"  ??  {q['question']:<{width}} score={best:.3f}  <- вопроса нет в базе")
+            print(
+                f"  ??  {q['question']:<{width}} score={best:.3f}  <- вопроса нет в базе"
+            )
             print(f"      нашли: {', '.join(top_docs)}   (ответа быть НЕ должно)")
             continue
 
@@ -173,13 +178,16 @@ def check_questions(client, model, alias: str) -> tuple:
         doc_hits += ok_doc
 
         fact = q.get("must_contain", "")
-        ok_fact = bool(fact) and any(fact.lower() in p.payload["text"].lower()
-                                     for p in found)
+        ok_fact = bool(fact) and any(
+            fact.lower() in p.payload["text"].lower() for p in found
+        )
         fact_hits += ok_fact
 
         mark = "OK" if ok_doc else " X"
-        print(f"  {mark}  {q['question']:<{width}} score={best:.3f}   "
-              f"документ: {'да' if ok_doc else 'нет':<3} факт: {'да' if ok_fact else 'нет'}")
+        print(
+            f"  {mark}  {q['question']:<{width}} score={best:.3f}   "
+            f"документ: {'да' if ok_doc else 'нет':<3} факт: {'да' if ok_fact else 'нет'}"
+        )
         print(f"      нашли: {', '.join(top_docs)}   ждали: {', '.join(q['expected'])}")
 
     print(f"\n  Нужный документ в тройке: {doc_hits}/{total}")
@@ -199,14 +207,15 @@ def baseline_whole_documents(model) -> tuple:
     print("=" * 92)
 
     docs = load_documents()
-    doc_vectors = model.encode([document_text(d) for d in docs],
-                               batch_size=16, normalize_embeddings=True)
+    doc_vectors = model.encode(
+        [document_text(d) for d in docs], batch_size=16, normalize_embeddings=True
+    )
 
     hits, total = 0, 0
     real, traps = [], []
     for q in QUESTIONS:
         qv = model.encode(q["question"], normalize_embeddings=True)
-        scores = doc_vectors @ qv                      # косинус: векторы нормированы
+        scores = doc_vectors @ qv  # косинус: векторы нормированы
         best = sorted(range(len(docs)), key=lambda i: -scores[i])[:TOP_K]
         top_docs = [docs[i]["doc_id"] for i in best]
         top_score = float(scores[best[0]])
@@ -219,8 +228,10 @@ def baseline_whole_documents(model) -> tuple:
         real.append((top_score, q["question"]))
         ok = any(d in q["expected"] for d in top_docs)
         hits += ok
-        print(f"  {'OK' if ok else ' X'}  {q['question'][:60]:<60} "
-              f"score={top_score:.3f}  нашли: {', '.join(top_docs)}")
+        print(
+            f"  {'OK' if ok else ' X'}  {q['question'][:60]:<60} "
+            f"score={top_score:.3f}  нашли: {', '.join(top_docs)}"
+        )
 
     print()
     print(f"  Нужный документ в тройке: {hits}/{total}")
@@ -256,14 +267,19 @@ def threshold_report(client, model, alias: str):
         print("  вопрос не из базы набрал больше настоящего. Одним числом эта")
         print("  задача не решается — к ней вернёмся в Модуле 4.")
     else:
-        print(f"\n  Порог можно поставить между {best_trap[0]:.3f} и {worst_real[0]:.3f}.")
+        print(
+            f"\n  Порог можно поставить между {best_trap[0]:.3f} и {worst_real[0]:.3f}."
+        )
         print("  На этом корпусе повезло — на большем так не будет.")
 
 
 def main():
     args = argparse.ArgumentParser(description="Поиск по индексу и оценка качества")
-    args.add_argument("--embedded", action="store_true",
-                      help="резервный режим без Docker (база в локальной папке)")
+    args.add_argument(
+        "--embedded",
+        action="store_true",
+        help="резервный режим без Docker (база в локальной папке)",
+    )
     args = args.parse_args()
 
     if any("___" in q for q in QUERIES):
@@ -276,8 +292,10 @@ def main():
     model = SentenceTransformer(MODEL_NAME)
 
     if manifest["model"] != MODEL_NAME:
-        print(f"\nВНИМАНИЕ: индекс собран моделью {manifest['model']}, "
-              f"а ищем моделью {MODEL_NAME}.")
+        print(
+            f"\nВНИМАНИЕ: индекс собран моделью {manifest['model']}, "
+            f"а ищем моделью {MODEL_NAME}."
+        )
         print("Векторы разных моделей несравнимы — пересобери индекс.\n")
 
     fingerprint = corpus_fingerprint()
@@ -291,10 +309,14 @@ def main():
         sys.exit(1)
 
     alias = manifest["alias"]
-    print(f"Индекс: коллекция «{manifest['collection']}» (алиас «{alias}»), "
-          f"собран {manifest['built_at']}")
-    print(f"        CHUNK_SIZE={manifest['chunk_size']}, OVERLAP={manifest['overlap']}, "
-          f"чанков {manifest['chunks']}")
+    print(
+        f"Индекс: коллекция «{manifest['collection']}» (алиас «{alias}»), "
+        f"собран {manifest['built_at']}"
+    )
+    print(
+        f"        CHUNK_SIZE={manifest['chunk_size']}, OVERLAP={manifest['overlap']}, "
+        f"чанков {manifest['chunks']}"
+    )
 
     try:
         print("\n" + "=" * 92)
