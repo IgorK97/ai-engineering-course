@@ -119,7 +119,7 @@ class Ticket(BaseModel):
             return None
         key = _norm(value)
         if key in REGISTRY_LOOKUP:
-            return key
+            return REGISTRY_LOOKUP[key]
         raise ValueError(f"Оборудование {value} отсутствует в реестре, на проверку")
 
 
