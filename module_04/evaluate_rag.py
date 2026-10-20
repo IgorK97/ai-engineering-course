@@ -25,10 +25,12 @@ CHUNK_SIZE/OVERLAP и посмотреть, как меняется качест
 """
 
 import argparse
+from datetime import datetime
 import json
 import os
 import shutil
 from pathlib import Path
+import re
 
 from dotenv import load_dotenv
 from gigachat import GigaChat
@@ -37,7 +39,7 @@ from sentence_transformers import SentenceTransformer
 import ingestion
 from qdrant_connect import make_client
 from vector_store import MODEL_NAME, load_manifest, search
-from rag_assistant import answer, format_context, REFUSAL_TEXT
+from rag_assistant import answer, format_context, ask_model, REFUSAL_TEXT
 
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "qdrant_chunks"
@@ -56,7 +58,7 @@ QUESTIONS = json.loads(
 # несколько минут: --sweep запускай отдельно, не в общем прогоне.
 CHUNK_COMBOS = [(1000, 200), (600, 0), (600, 150), (400, 0), (400, 100), (300, 150)]
 
-_SEP  = "─" * 88
+_SEP = "─" * 88
 _SEP2 = "═" * 88
 
 # Системный промпт судьи. Менять не нужно — он уже настроен на корпус курса.
@@ -93,28 +95,24 @@ JUDGE_SYSTEM = (
 #  ОЦЕНКА ПО РАЗМЕТКЕ
 # ====================================================================
 
+
 def classify(question: dict, hits, result: dict) -> str:
-    """TODO 1: оценка ответа по разметке eval-набора.
+    ans = (result.get("answer") or "").strip()
+    refused = ans == REFUSAL_TEXT
+    if not question["in_corpus"]:
+        return "ok" if refused else "hallucination"
 
-    Верни одну из меток:
-      - ok
-      - hallucination
-      - over_refusal
-      - retrieval_error
-      - generation_error
+    if refused:
+        return "over_refusal"
 
-    Логика:
-      1) Если question["in_corpus"] == False:
-         - ответ == REFUSAL_TEXT -> ok
-         - иначе -> hallucination
-      2) Если вопрос из корпуса, но ассистент отказал (REFUSAL_TEXT) -> over_refusal
-      3) Проверить источники: хотя бы один doc_id из question["expected"]
-         должен быть в result["sources"], иначе -> retrieval_error
-      4) Проверить фактоид: question["must_contain"] должен встречаться в answer
-         (без учёта регистра), иначе -> generation_error
-      5) Иначе -> ok
-    """
-    # TODO 1: замени заглушку на реализацию по шагам выше
+    expected = set(question.get("expected", []))
+    if not expected.intersection(result.get("sources", [])):
+        return "retrieval_error"
+
+    must = question.get("must_contain", "")
+    if must and must.lower() not in ans.lower():
+        return "generation_error"
+
     return "ok"
 
 
@@ -122,33 +120,29 @@ def classify(question: dict, hits, result: dict) -> str:
 #  LLM-КАК-СУДЬЯ
 # ====================================================================
 
+
 def llm_judge(question: str, context: str, answer_text: str) -> dict:
-    """TODO 2: попросить GigaChat оценить ответ ассистента как судья.
-
-    Что сделать:
-      1) Собрать user_msg из question/context/answer_text.
-      2) Вызвать GigaChat с system=JUDGE_SYSTEM и user=user_msg.
-      3) Распарсить JSON из ответа модели и вернуть dict.
-      4) В except вернуть fallback:
-         {"overall_verdict": "error", "reason": str(e)}
-
-    Ожидаемые поля в словаре судьи:
-      answer_relevance, context_relevance, answer_faithfulness,
-      overall_verdict, reason
-    """
-    # TODO 2: замени заглушку на реальный вызов судьи
-    return {
-        "answer_relevance": "low",
-        "context_relevance": "low",
-        "answer_faithfulness": "low",
-        "overall_verdict": "error",
-        "reason": "TODO 2: llm_judge не реализован",
-    }
+    user_msg = f"ВОПРОС:\n{question}\n\nКОНТЕКСТ:\n{context}\n\nОТВЕТ:\n{answer_text}"
+    try:
+        raw = ask_model(
+            [
+                {"role": "system", "content": JUDGE_SYSTEM},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=500,
+        )
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            raise ValueError(f"в ответе судьи нет JSON: {raw[:120]}")
+        return json.loads(m.group(0))
+    except Exception as e:
+        return {"overall_verdict": "error", "reason": str(e)}
 
 
 # ====================================================================
 #  КОНТРОЛЬНЫЙ ПРОГОН
 # ====================================================================
+
 
 def run_eval(client, model, alias: str, verbose=True) -> dict:
     """Прогоняет контрольный набор и выводит два отдельных отчёта."""
@@ -159,13 +153,15 @@ def run_eval(client, model, alias: str, verbose=True) -> dict:
         result = answer(client, model, q["question"], alias)
         ctx = format_context(hits) if hits else "(ничего не найдено)"
 
-        rows.append({
-            "id":        q.get("id", ""),
-            "question":  q["question"],
-            "in_corpus": q["in_corpus"],
-            "markup":    classify(q, hits, result),
-            "judgment":  llm_judge(q["question"], ctx, result["answer"]),
-        })
+        rows.append(
+            {
+                "id": q.get("id", ""),
+                "question": q["question"],
+                "in_corpus": q["in_corpus"],
+                "markup": classify(q, hits, result),
+                "judgment": llm_judge(q["question"], ctx, result["answer"]),
+            }
+        )
 
     if verbose:
         _print_markup_report(rows)
@@ -177,7 +173,7 @@ def run_eval(client, model, alias: str, verbose=True) -> dict:
         mk = r["markup"]
         jv = r["judgment"].get("overall_verdict", "error")
         counts["markup"][mk] = counts["markup"].get(mk, 0) + 1
-        counts["judge"][jv]  = counts["judge"].get(jv, 0) + 1
+        counts["judge"][jv] = counts["judge"].get(jv, 0) + 1
     counts["_rows"] = rows
     return counts
 
@@ -187,32 +183,32 @@ def run_eval(client, model, alias: str, verbose=True) -> dict:
 # ---------------------------------------------------------------------------
 
 _MARKUP_LABEL = {
-    "ok":               "✓ верно",
-    "hallucination":    "✗ галлюцинация",
-    "retrieval_error":  "✗ документ не найден",
+    "ok": "✓ верно",
+    "hallucination": "✗ галлюцинация",
+    "retrieval_error": "✗ документ не найден",
     "generation_error": "⚠ ответ неполный",
-    "over_refusal":     "⚠ отказал зря",
+    "over_refusal": "⚠ отказал зря",
 }
 
 _JUDGE_VERDICT_LABEL = {
-    "ok":                   "всё хорошо",
-    "retrieval_problem":    "контекст не подходит",
-    "generation_problem":   "ответ слабый",
-    "hallucination":        "галлюцинация",
-    "refusal_ok":           "отказ обоснован",
-    "mixed":                "смешанный случай",
-    "error":                "ошибка вызова судьи",
+    "ok": "всё хорошо",
+    "retrieval_problem": "контекст не подходит",
+    "generation_problem": "ответ слабый",
+    "hallucination": "галлюцинация",
+    "refusal_ok": "отказ обоснован",
+    "mixed": "смешанный случай",
+    "error": "ошибка вызова судьи",
 }
 
 _LEVEL_LABEL = {
-    "high":   "✓ высокая",
+    "high": "✓ высокая",
     "medium": "⚠ средняя",
-    "low":    "✗ низкая",
+    "low": "✗ низкая",
 }
 
 
 def _short(text: str, width: int) -> str:
-    return text[:width - 1] + "…" if len(text) > width else text
+    return text[: width - 1] + "…" if len(text) > width else text
 
 
 def _print_markup_report(rows: list) -> None:
@@ -232,7 +228,13 @@ def _print_markup_report(rows: list) -> None:
 
     print()
     print("  Итого:")
-    order = ["ok", "retrieval_error", "generation_error", "hallucination", "over_refusal"]
+    order = [
+        "ok",
+        "retrieval_error",
+        "generation_error",
+        "hallucination",
+        "over_refusal",
+    ]
     for mk in order:
         n = counts.get(mk, 0)
         if n or mk == "ok":
@@ -262,8 +264,8 @@ def _print_judge_report(rows: list) -> None:
                     return _LEVEL_LABEL[key]
             return f"({val})"
 
-        ar = _level(j.get("answer_relevance",    ""))
-        cr = _level(j.get("context_relevance",   ""))
+        ar = _level(j.get("answer_relevance", ""))
+        cr = _level(j.get("context_relevance", ""))
         af = _level(j.get("answer_faithfulness", ""))
         vl = _JUDGE_VERDICT_LABEL.get(verdict, verdict)
         reason = j.get("reason", "")
@@ -281,8 +283,15 @@ def _print_judge_report(rows: list) -> None:
     print()
     print(_SEP)
     print("  Итого по судье:")
-    order = ["ok", "refusal_ok", "generation_problem", "retrieval_problem",
-             "hallucination", "mixed", "error"]
+    order = [
+        "ok",
+        "refusal_ok",
+        "generation_problem",
+        "retrieval_problem",
+        "hallucination",
+        "mixed",
+        "error",
+    ]
     for v in order:
         n = counts_verdict.get(v, 0)
         if n:
@@ -294,6 +303,7 @@ def _print_judge_report(rows: list) -> None:
 #  ПЕРЕБОР CHUNK_SIZE / OVERLAP
 # ====================================================================
 
+
 def sweep_chunking(client, model, alias: str):
     """Автоматически перебирает параметры нарезки и сравнивает качество двумя способами.
 
@@ -301,8 +311,7 @@ def sweep_chunking(client, model, alias: str):
     Вручную запускать ingestion.py несколько раз не нужно — функция сама
     пересобирает индекс Qdrant на каждой комбинации параметров.
 
-    TODO 3: сейчас функция только печатает шапку таблицы — заглушка.
-    Напиши цикл по CHUNK_COMBOS. На каждой итерации:
+    На каждой итерации:
       1. ingestion.CHUNK_SIZE = size; ingestion.OVERLAP = overlap
       2. ingestion.build_index(client, model)  — пересобирает индекс, возвращает manifest
       3. counts = run_eval(client, model, alias, verbose=False)
@@ -332,20 +341,52 @@ def sweep_chunking(client, model, alias: str):
     col = f"{'Размер чанка / перекрытие':<26}"
     print(f"\n  {col} | {'чанков':>7} | {'✓ по разметке':>14} | {'✓ по судье':>10}")
     print("  " + _SEP[:72])
-    original = (ingestion.CHUNK_SIZE, ingestion.OVERLAP)
-    # TODO 3: перебор здесь
-    ingestion.CHUNK_SIZE, ingestion.OVERLAP = original
+    try:
+        for size, overlap in CHUNK_COMBOS:
+            ingestion.CHUNK_SIZE = size
+            ingestion.OVERLAP = overlap
+
+            manifest, _chunks = ingestion.build_index(client, model)
+            counts = run_eval(client, model, alias, verbose=False)
+
+            rows = [r for r in counts["_rows"] if r["in_corpus"]]
+            ok_markup = sum(1 for r in rows if r["markup"] == "ok")
+            ok_judge = sum(
+                1 for r in rows if r["judgment"].get("overall_verdict") == "ok"
+            )
+
+            combo = f"{size:>4} / {overlap:<3}"
+            print(
+                f"  {combo:<26} | {manifest['chunks']:>7} | "
+                f"{ok_markup:>9} / {in_corpus_total:<2} | "
+                f"{ok_judge:>5} / {in_corpus_total:<2}"
+            )
+    finally:
+        ingestion.CHUNK_SIZE, ingestion.OVERLAP = 600, 150
+        print("\n Возвращаю параметры 600/150 и пересобираю индекс...")
+        ingestion.build_index(client, model)
 
 
 # ====================================================================
 #  КОНФЛИКТ ВЕРСИЙ ОДНОГО РЕГЛАМЕНТА
 # ====================================================================
 
+
+def _base_id(doc_id: str) -> str:
+    return re.sub(r"-OLD$", "", doc_id)
+
+
+def _date_key(value: str) -> datetime:
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(value, fmt)
+        except (ValueError, TypeError):
+            pass
+    return datetime.min
+
+
 def resolve_conflicts(hits):
     """Если в выдаче несколько версий одного регламента — оставляет свежую.
-
-    TODO 4: сейчас возвращает hits без изменений — заглушка. С ней
-    demo_conflict() покажет саму проблему, но не решение.
 
     В data/corpus_conflict/REGL-GEN-01-OLD.json лежит устаревшая (version
     2.0, дата 2022-05-14) редакция регламента, который в основном корпусе
@@ -360,7 +401,19 @@ def resolve_conflicts(hits):
     (строки ГГГГ-ММ-ДД сравниваются как даты), остальные выбросить.
     Порядок и score оставшихся точек не менять.
     """
-    return hits
+    newest = {}
+    for h in hits:
+        base = _base_id(h.payload["doc_id"])
+        key = _date_key(h.payload.get("date") or "")
+        if base not in newest or key > newest[base]:
+            newest[base] = key
+
+    return [
+        h
+        for h in hits
+        if _date_key(h.payload.get("date") or "")
+        == newest[_base_id(h.payload["doc_id"])]
+    ]
 
 
 def demo_conflict(client, model, alias: str):
@@ -370,10 +423,12 @@ def demo_conflict(client, model, alias: str):
     print(_SEP2)
 
     fixture = CONFLICT_DIR / "REGL-GEN-01-OLD.json"
-    target  = CORPUS_DIR / fixture.name
+    target = CORPUS_DIR / fixture.name
     shutil.copy(fixture, target)
-    print(f"Добавлен в корпус: {fixture.name} (version 2.0, 2022-05-14) — "
-          f"рядом с действующим REGL-GEN-01 (version 3.1, 2024-01-10).")
+    print(
+        f"Добавлен в корпус: {fixture.name} (version 2.0, 2022-05-14) — "
+        f"рядом с действующим REGL-GEN-01 (version 3.1, 2024-01-10)."
+    )
     print("Пересобираю индекс...")
     ingestion.build_index(client, model)
 
@@ -384,15 +439,19 @@ def demo_conflict(client, model, alias: str):
     print("\nБез resolve_conflicts — что реально лежит в топ-5:")
     for h in hits:
         p = h.payload
-        print(f"  {h.score:.3f}  {p['doc_id']:<18} версия {p.get('version') or '—':<5} "
-              f"дата {p.get('date') or '—':<11} {p.get('section') or ''}")
+        print(
+            f"  {h.score:.3f}  {p['doc_id']:<18} версия {p.get('version') or '—':<5} "
+            f"дата {p.get('date') or '—':<11} {p.get('section') or ''}"
+        )
 
     filtered = resolve_conflicts(hits)
     print("\nПосле resolve_conflicts:")
     for h in filtered:
         p = h.payload
-        print(f"  {h.score:.3f}  {p['doc_id']:<18} версия {p.get('version') or '—':<5} "
-              f"дата {p.get('date') or '—':<11} {p.get('section') or ''}")
+        print(
+            f"  {h.score:.3f}  {p['doc_id']:<18} версия {p.get('version') or '—':<5} "
+            f"дата {p.get('date') or '—':<11} {p.get('section') or ''}"
+        )
 
     print(
         "\nЕсли в выдаче до сих пор обе редакции — TODO 4 ещё не сделан, и "
@@ -411,13 +470,18 @@ def demo_conflict(client, model, alias: str):
 #  ОСНОВНОЙ ПРОГОН
 # ====================================================================
 
+
 def main():
     parser = argparse.ArgumentParser(description="Оценка качества и защита RAG")
     parser.add_argument("--embedded", action="store_true")
-    parser.add_argument("--sweep", action="store_true",
-                        help="перебор CHUNK_SIZE/OVERLAP (пересобирает индекс)")
-    parser.add_argument("--conflict", action="store_true",
-                        help="демо конфликта версий регламента")
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help="перебор CHUNK_SIZE/OVERLAP (пересобирает индекс)",
+    )
+    parser.add_argument(
+        "--conflict", action="store_true", help="демо конфликта версий регламента"
+    )
     args = parser.parse_args()
 
     manifest = load_manifest()
