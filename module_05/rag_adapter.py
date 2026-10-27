@@ -41,10 +41,10 @@ if not M4_DIR.exists():
 sys.path.insert(0, str(M4_DIR))
 
 from sentence_transformers import SentenceTransformer  # noqa: E402
-from qdrant_connect import make_client                 # noqa: E402
-from vector_store import MODEL_NAME, load_manifest     # noqa: E402
+from qdrant_connect import make_client  # noqa: E402
+from vector_store import MODEL_NAME, load_manifest  # noqa: E402
 
-import rag_assistant                                   # noqa: E402
+import rag_assistant  # noqa: E402
 
 # режим базы: True — embedded (без Docker), False — сервер Qdrant в Docker
 EMBEDDED = True
@@ -77,8 +77,10 @@ def answer(question: str) -> dict:
 
 
 if __name__ == "__main__":
-    for q in ["В какой срок устраняются критичные неисправности насосов?",
-              "Какая столица Австралии?"]:
+    for q in [
+        "В какой срок устраняются критичные неисправности насосов?",
+        "Какая столица Австралии?",
+    ]:
         r = answer(q)
         print(f"Вопрос   : {q}")
         print(f"Ответ    : {r['answer'][:200]}")

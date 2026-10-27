@@ -33,6 +33,7 @@ from langchain_core.runnables import RunnableLambda
 from langchain_gigachat.chat_models import GigaChat
 
 from rag_stub import answer as rag_answer
+# from rag_adapter import answer as rag_answer
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
