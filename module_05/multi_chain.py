@@ -46,9 +46,9 @@ REGISTRY = json.loads(
     (DATA_DIR / "equipment_registry.json").read_text(encoding="utf-8")
 )["equipment"]
 
-CASES = json.loads(
-    (DATA_DIR / "routing_cases.json").read_text(encoding="utf-8")
-)["cases"]
+CASES = json.loads((DATA_DIR / "routing_cases.json").read_text(encoding="utf-8"))[
+    "cases"
+]
 
 
 # ====================================================================
@@ -63,15 +63,43 @@ CASES = json.loads(
 # технические вопросы ещё уходят не туда.
 # ------------------------------------------------------------------
 TECH_WORDS = [
-    "ошибк", "оборудован", "стано", "датчик", "mes",
+    "ошибк",
+    "оборудован",
+    "стано",
+    "датчик",
+    "mes",
+    "неисправ",
+    "ремонт",
+    "конвейер",
+    "насос",
+    "пресс",
+    "подшипник",
+    "редуктор",
+    "компрессор",
+    "гидросистем",
+    "шпиндел",
+    "датчик",
+    "сушил",
+    "вибрац",
 ]
 
 # Основы слов, при которых обращение НЕМЕДЛЕННО уходит человеку.
 # Здесь ложное срабатывание дешевле пропуска: пусть лучше диспетчер
 # прочитает лишнее сообщение, чем модель «поможет» при пожаре.
 SAFETY_WORDS = [
-    "пожар", "дым", "задымлен", "возгоран", "газ",
-    "травм", "пострадав", "искрит", "горит",
+    "пожар",
+    "дым",
+    "задымлен",
+    "возгоран",
+    "газ",
+    "травм",
+    "пострадав",
+    "искрит",
+    "горит",
+    "гар",
+    "упал",
+    "утечк",
+    "сознан",
 ]
 
 
@@ -97,19 +125,14 @@ def _tokens(text: str) -> list:
 
 
 def mentions_equipment(question: str) -> bool:
-    """Есть ли в вопросе код оборудования из реестра.
-
-    TODO 2. Код — самый надёжный технический признак: «KM-101 странно шумит»
-    не содержит ни одного слова из TECH_WORDS, но код выдаёт маршрут.
-    Пройди по _tokens(question), нормализуй каждое слово через _norm(...)
-    и проверь, есть ли оно в REGISTRY_LOOKUP.
-    """
-    raise NotImplementedError("TODO 2: поиск кода оборудования в вопросе")
+    """Есть ли в вопросе код оборудования из реестра."""
+    return any(_norm(token) in REGISTRY_LOOKUP for token in _tokens(question))
 
 
 # ====================================================================
 #  КЛАССИФИКАТОР ПРАВИЛ
 # ====================================================================
+
 
 def _has_word(text: str, stems: list) -> bool:
     """Ищет основы слов по границе слова: «газом» — да, «магазин» — нет."""
@@ -118,16 +141,12 @@ def _has_word(text: str, stems: list) -> bool:
 
 
 def classify(question: str) -> str:
-    """Маршрут вопроса: safety / technical / general.
-
-    TODO 3. Порядок проверок — это приоритет: сообщение «искрит датчик
-    у насоса» содержит и safety-, и технические признаки, но люди важнее
-    железа. Правила:
-      * нашлась основа из SAFETY_WORDS               -> "safety";
-      * основа из TECH_WORDS ИЛИ код из реестра      -> "technical";
-      * иначе                                        -> "general".
-    """
-    raise NotImplementedError("TODO 3: классификатор правил")
+    """Маршрут вопроса: safety / technical / general."""
+    if _has_word(question, SAFETY_WORDS):
+        return "safety"
+    if _has_word(question, TECH_WORDS) or mentions_equipment(question):
+        return "technical"
+    return "general"
 
 
 # ====================================================================
@@ -151,42 +170,42 @@ SAFETY_ANSWER = (
     "Если есть угроза людям — действуйте по инструкции эвакуации."
 )
 
-CLARIFY_ANSWER = ("Сформулируйте вопрос подробнее: что за оборудование "
-                  "или система, что именно происходит.")
+CLARIFY_ANSWER = (
+    "Сформулируйте вопрос подробнее: что за оборудование "
+    "или система, что именно происходит."
+)
 
 # короче этого (в символах) вопрос не маршрутизируем, а просим уточнить
 MIN_QUESTION_LEN = 4
 
 
 def build_router_chain(model):
-    """Вилка маршрутов. Вход {"question": ...}, выход {"route", "answer"}.
-
-    TODO 4. RunnableBranch перебирает пары (условие, ветка) и запускает
-    первую ветку, чьё условие сработало; последний аргумент — ветка
-    по умолчанию. Собери вилку из четырёх маршрутов:
-
-      1) len(x["question"].strip()) < MIN_QUESTION_LEN
-             -> wrap("уточнить", CLARIFY_ANSWER)
-      2) classify(...) == "safety"
-             -> wrap("safety -> человеку", SAFETY_ANSWER)   # БЕЗ модели!
-      3) classify(...) == "technical"
-             -> wrap("technical", tech_chain.invoke(x))
-      4) по умолчанию
-             -> wrap("general", general_chain.invoke(x))
-
-    Каждая ветка — RunnableLambda(lambda x: ...). Условие — обычная
-    lambda x: ... (первым элементом пары).
-    """
+    """Вилка маршрутов. Вход {"question": ...}, выход {"route", "answer"}."""
     tech_chain = TECH_PROMPT | model | StrOutputParser()
     general_chain = GENERAL_PROMPT | model | StrOutputParser()
 
     def wrap(route, answer):
         return {"route": route, "answer": answer}
 
-    raise NotImplementedError("TODO 4: собери RunnableBranch из четырёх маршрутов")
+    return RunnableBranch(
+        (
+            lambda x: len(x["question"].strip()) < MIN_QUESTION_LEN,
+            RunnableLambda(lambda x: wrap("уточнить", CLARIFY_ANSWER)),
+        ),
+        (
+            lambda x: classify(x["question"]) == "safety",
+            RunnableLambda(lambda x: wrap("safety -> человеку", SAFETY_ANSWER)),
+        ),
+        (
+            lambda x: classify(x["question"]) == "technical",
+            RunnableLambda(lambda x: wrap("technical", tech_chain.invoke(x))),
+        ),
+        RunnableLambda(lambda x: wrap("general", general_chain.invoke(x))),
+    )
 
 
 # ====================================================================
+
 
 def run_dry():
     """Прогон маршрутизатора по контрольным случаям — без модели и сети."""
@@ -194,8 +213,11 @@ def run_dry():
     print(f"{'ожидали':<12} {'получили':<12} вопрос")
     print("-" * 74)
     for case in CASES:
-        got = ("уточнить" if len(case["question"].strip()) < MIN_QUESTION_LEN
-               else classify(case["question"]))
+        got = (
+            "уточнить"
+            if len(case["question"].strip()) < MIN_QUESTION_LEN
+            else classify(case["question"])
+        )
         ok = got == case["route"]
         correct += ok
         mark = "  " if ok else "X "
@@ -209,7 +231,7 @@ def run_live():
         credentials=os.getenv("GIGACHAT_CREDENTIALS"),
         scope=os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS"),
         verify_ssl_certs=False,
-        model="GigaChat-2",   # модель ВСЕГДА явно: алиасов «по умолчанию» на новом API нет
+        model="GigaChat-2",  # модель ВСЕГДА явно: алиасов «по умолчанию» на новом API нет
         temperature=0.0,
         max_tokens=300,
     )
@@ -232,7 +254,10 @@ def run_live():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Маршрутизация обращений")
-    parser.add_argument("--dry", action="store_true",
-                        help="проверить только маршруты, без вызова модели")
+    parser.add_argument(
+        "--dry",
+        action="store_true",
+        help="проверить только маршруты, без вызова модели",
+    )
     args = parser.parse_args()
     run_dry() if args.dry else run_live()
