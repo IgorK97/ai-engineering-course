@@ -1,0 +1,4 @@
+{"timestamp": "2026-11-10T13:17:51.586613+00:00", "action": "get_equipment_status", "params": {"equipment_id": "PUMP-07"}, "ok": true}
+{"timestamp": "2026-11-10T13:18:02.048097+00:00", "action": "create_incident", "params": {"equipment_id": "SEP-04", "priority": "high", "role": "engineer"}, "ok": true}
+{"timestamp": "2026-11-10T13:18:10.650960+00:00", "action": "get_equipment_status", "params": {"equipment_id": "XYZ-999"}, "ok": false}
+{"timestamp": "2026-11-10T13:19:35.066767+00:00", "action": "create_incident", "params": {"equipment_id": "SEP-04", "priority": "high", "role": "viewer"}, "ok": false}
