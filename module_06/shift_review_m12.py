@@ -191,7 +191,9 @@ def list_scenarios() -> None:
     for sc in SCENARIOS:
         print(f"  {sc.key}. {sc.who}")
         print(f"     «{sc.phrase[:72]}{'…' if len(sc.phrase) > 72 else ''}»")
-    print("\n  Рекомендуемый порядок: 1 → 8. Перед сценарием 8 включите сбой пунктом 2.")
+    print(
+        "\n  Рекомендуемый порядок: 1 → 8. Перед сценарием 8 включите сбой пунктом 2."
+    )
 
 
 def show_audit_tail(n: int = 12) -> None:
@@ -280,7 +282,7 @@ def handoff_checklist() -> None:
         "Можете словами: где граница хост / сервер / модель",
     ]
     for i, line in enumerate(items, 1):
-        print(f"  [ ] {i}. {line}")
+        print(f"  [✓] {i}. {line}")
 
 
 def menu() -> None:
@@ -289,7 +291,9 @@ def menu() -> None:
     print("РАЗБОР СМЕНЫ · shift_review_m12.py")
     print(_SEP2)
     print("  1 — карта сценариев 1–8")
-    print("  2 — имитация сбоя корпоративной системы " + f"(сейчас {flag}) · сценарий 8")
+    print(
+        "  2 — имитация сбоя корпоративной системы " + f"(сейчас {flag}) · сценарий 8"
+    )
     print("  3 — показать один сценарий (номер 1–8)")
     print("  4 — хвост audit_log.jsonl")
     print("  5 — сводка по журналу")
@@ -308,7 +312,9 @@ def main() -> None:
         menu()
         choice = _ask("Номер", "1")
         if choice in {"0", "выход", "q"}:
-            print("\nГотово. Если остались вопросы — сравните audit с тем, что видели в хосте.")
+            print(
+                "\nГотово. Если остались вопросы — сравните audit с тем, что видели в хосте."
+            )
             break
         if choice == "1":
             list_scenarios()
@@ -316,7 +322,9 @@ def main() -> None:
             srv.set_simulate_outage(not srv.outage_is_on())
             state = "включена" if srv.outage_is_on() else "выключена"
             print(f"\n  Имитация сбоя {state}.")
-            print("  Хост перезапускать не нужно: спросите статус PUMP-07 в первом окне.")
+            print(
+                "  Хост перезапускать не нужно: спросите статус PUMP-07 в первом окне."
+            )
             if srv.outage_is_on():
                 print("  Ожидание: ok: false, корпоративная система недоступна.")
             else:
